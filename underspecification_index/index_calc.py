@@ -34,8 +34,8 @@ from sklearn.model_selection import train_test_split
 @njit(fastmath=True, cache=True)
 def kendalltau_numba_naive(a, b):
     """
-    Numba optimised o(n^2) kendall correlation coefficent
-    (tau-a) calculation implementation
+    Numba optimised o(n^2) kendall correlation coefficient
+    (tau-a) calculation implementation.
 
             Parameters:
                  a,b - np.ndarray (1d.array):
@@ -44,7 +44,7 @@ def kendalltau_numba_naive(a, b):
 
             Returns:
                 tau - float:
-                    The Kendall correlation coefficent
+                    The Kendall correlation coefficient
     """
 
     a = np.argsort(a)
@@ -64,16 +64,30 @@ def kendalltau_numba_naive(a, b):
     return tau
 
 
-# Calculate the average mean squared error between two arrays
 @njit(fastmath=True)
-def calc_mse(pred, y_tst):
+def calc_se(pred, y_tst):
+    """
+    Calculate the squared error for each index between two arrays.
+    Pred and y_tst must be the same length.
+
+    Parameters:
+        pred - np.ndarray (1d.array):
+            The predicted values
+        y_tst - np.ndarray (1d.array):
+            The sampled values from which we determine error
+
+    Returns:
+        ses - np.ndarray (1d.array):
+            Array of squared errors between pred and y_tst.
+    """
+
     n = len(pred)
 
-    mses = np.zeros(n)
+    ses = np.zeros(n)
     for i in range(n):
-        mses[i] = np.square(pred[i] - y_tst[i])
+        ses[i] = np.square(pred[i] - y_tst[i])
 
-    return mses
+    return ses
 
 
 def gen_exp_matrix(x_trn, y_trn, x_tst, y_tst, theta, model_count=100,
@@ -97,6 +111,9 @@ def gen_exp_matrix(x_trn, y_trn, x_tst, y_tst, theta, model_count=100,
                     Testing equivalent of x_trn.
                 y_tst - np.ndarray (2d-array):
                     Testing equivalent of y_trn.
+                theta - int:
+                    The performance threshold for predictors in
+                    the Rashomon Set.
                 model_count - int, default 100:
                     The number of models to include
                     in the Rashomon set.
@@ -177,9 +194,47 @@ def gen_exp_matrix(x_trn, y_trn, x_tst, y_tst, theta, model_count=100,
     return np.transpose(shap_exps, (1, 0, 2))
 
 
-# TODO tidy both sub function
-# TODO add docstrings
 def exp_classification(x_trn, y_trn, x_tst, y_tst, theta, tree_count):
+    """
+    Generate a random forest classifier, if it outperforms the threshold theta,
+    compute its SHAP explanations for indexes in the testing set x_tst.
+
+    Args:
+        x_trn - np.ndarray (2d-array):
+            The numerical training features
+            used to train the predictors.
+            Each index should be all features
+            for a training instance.
+        y_trn - np.ndarray (2d-array):
+            The numerical training prediction
+            targets, each index should be the
+            prediction target for the features
+            at the same index of x_trn.
+        x_tst - np.ndarray (2d-array):
+            Testing equivalent of x_trn.
+        y_tst - np.ndarray (2d-array):
+            Testing equivalent of y_trn.
+        theta - int:
+            The performance threshold for predictors in
+            the Rashomon Set.
+        tree_count - int:
+            The number of trees the random forest
+            will be made of.
+
+    Returns:
+        acc - np.ndarray (1d.array):
+            Array of squared errors between the
+            predictions of the generated predictor
+            and y_tst.
+        shap_exps - np.ndarray (2d-array):
+            The SHAP explanations of the generated predictor
+            for all instances in the testing set x_tst.
+        pred - np.array (1d-array):
+            The predictions of the generated predictor
+            for the testing set x_tst.
+
+    """
+
     f = RandomForestClassifier(n_estimators=tree_count)
 
     f.fit(x_trn, y_trn)
@@ -192,23 +247,61 @@ def exp_classification(x_trn, y_trn, x_tst, y_tst, theta, tree_count):
         shap_exps = np.array(shap.TreeExplainer(f).shap_values(x_tst)[0])
         return acc, shap_exps, pred
     else:
-        return -1, None, None
+        return -1.0, None, None
 
 
 def exp_regression(x_trn, y_trn, x_tst, y_tst, theta, tree_count):
+    """
+    Generate a random forest regressor, if it outperforms the threshold theta,
+    compute its SHAP explanations for indexes in the testing set x_tst.
+
+    Args:
+        x_trn - np.ndarray (2d-array):
+            The numerical training features
+            used to train the predictors.
+            Each index should be all features
+            for a training instance.
+        y_trn - np.ndarray (2d-array):
+            The numerical training prediction
+            targets, each index should be the
+            prediction target for the features
+            at the same index of x_trn.
+        x_tst - np.ndarray (2d-array):
+            Testing equivalent of x_trn.
+        y_tst - np.ndarray (2d-array):
+            Testing equivalent of y_trn.
+        theta - int:
+            The performance threshold for predictors in
+            the Rashomon Set.
+        tree_count - int:
+            The number of trees the random forest
+            will be made of.
+
+    Returns:
+        pred_ses - float:
+             of the generated predictor on
+            the testing set x_tst.
+        shap_exps - np.ndarray (2d-array):
+            The SHAP explanations of the generated predictor
+            for all instances in the testing set x_tst.
+        pred - np.array (1d-array):
+            The predictions of the generated predictor
+            for the testing set x_tst.
+    """
+
     f = RandomForestRegressor(n_estimators=tree_count)
 
     f.fit(x_trn, y_trn)
 
     pred = f.predict(x_tst)
 
-    pred_mses = calc_mse(pred, y_tst)
+    pred_ses = calc_se(pred, y_tst)
 
-    if np.mean(pred_mses) <= theta:
+    if np.mean(pred_ses) <= theta:
         shap_exps = np.array(shap.TreeExplainer(f).shap_values(x_tst))
-        return pred_mses, shap_exps, pred
+        return pred_ses, shap_exps, pred
     else:
-        return pred_mses, None, None
+        return pred_ses, None, None
 
 
 @njit(fastmath=True, cache=True)
